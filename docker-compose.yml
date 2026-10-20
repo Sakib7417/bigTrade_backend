@@ -29,11 +29,11 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      PORT: 5010
       # Override: inside Docker the DB host is the postgres service, not localhost
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-investment_db}
+    # PORT comes from .env — app listens on it AND the host maps the same port
     ports:
-      - "5000:5000"
+      - "${PORT:-5000}:${PORT:-5000}"
     command: sh -c "npx prisma migrate deploy && node src/server.js"
 
 volumes:
