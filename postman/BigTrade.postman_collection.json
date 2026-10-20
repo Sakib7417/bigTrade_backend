@@ -1,0 +1,293 @@
+{
+  "info": {
+    "name": "BigTrade Investment Platform",
+    "description": "Investment, ROI, Referral & Multi-Level Income API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000/api/v1" },
+    { "key": "accessToken", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "investmentId", "value": "" },
+    { "key": "withdrawalId", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"mobile\": \"+15550001111\",\n  \"password\": \"SecurePass123\",\n  \"referralCode\": \"\"\n}"
+            }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["const r = pm.response.json();", "if (r.data) {", "  pm.collectionVariables.set('accessToken', r.data.accessToken);", "  pm.collectionVariables.set('refreshToken', r.data.refreshToken);", "  pm.collectionVariables.set('userId', r.data.user.id);", "}"] }
+          }]
+        },
+        {
+          "name": "Login (User)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"john@example.com\",\n  \"password\": \"SecurePass123\"\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["const r = pm.response.json();", "if (r.data) {", "  pm.collectionVariables.set('accessToken', r.data.accessToken);", "  pm.collectionVariables.set('refreshToken', r.data.refreshToken);", "  pm.collectionVariables.set('userId', r.data.user.userId || r.data.user.id);", "}"] }
+          }]
+        },
+        {
+          "name": "Login (Admin)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "body": { "mode": "raw", "raw": "{\n  \"identifier\": \"admin@bigtrade.local\",\n  \"password\": \"AdminPass123!\"\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["const r = pm.response.json();", "if (r.data) pm.collectionVariables.set('adminToken', r.data.accessToken);"] }
+          }]
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/refresh",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "auth": { "type": "noauth" },
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/auth/logout",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "item": [
+        { "name": "Get Profile", "request": { "method": "GET", "url": "{{baseUrl}}/users/me" } },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/users/me",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"John D.\"\n}" }
+          }
+        },
+        { "name": "Dashboard", "request": { "method": "GET", "url": "{{baseUrl}}/dashboard" } }
+      ]
+    },
+    {
+      "name": "Investments",
+      "item": [
+        {
+          "name": "Create Investment",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/investments",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 500,\n  \"idempotencyKey\": \"inv-unique-key-001\"\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["const r = pm.response.json();", "if (r.data?.investment) pm.collectionVariables.set('investmentId', r.data.investment.id);"] }
+          }]
+        },
+        {
+          "name": "Top-Up Investment",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/investments/top-up",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"investmentId\": \"{{investmentId}}\",\n  \"amount\": 100\n}" }
+          }
+        },
+        { "name": "List Investments", "request": { "method": "GET", "url": "{{baseUrl}}/investments?page=1&limit=10" } },
+        { "name": "Get Investment", "request": { "method": "GET", "url": "{{baseUrl}}/investments/{{investmentId}}" } }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        { "name": "Get Wallet", "request": { "method": "GET", "url": "{{baseUrl}}/wallet" } },
+        { "name": "Transactions", "request": { "method": "GET", "url": "{{baseUrl}}/wallet/transactions?page=1&limit=20" } }
+      ]
+    },
+    {
+      "name": "Withdrawals",
+      "item": [
+        {
+          "name": "Request Withdrawal",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/withdrawals",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 100,\n  \"bankDetails\": {\n    \"bankName\": \"Bank\",\n    \"accountNumber\": \"123456789\",\n    \"accountName\": \"John Doe\"\n  },\n  \"idempotencyKey\": \"wd-unique-key-001\"\n}" }
+          },
+          "event": [{
+            "listen": "test",
+            "script": { "exec": ["const r = pm.response.json();", "if (r.data?.withdrawal) pm.collectionVariables.set('withdrawalId', r.data.withdrawal.id);"] }
+          }]
+        },
+        {
+          "name": "Principal Withdrawal",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/withdrawals/principal",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"investmentId\": \"{{investmentId}}\",\n  \"bankDetails\": {\n    \"bankName\": \"Bank\",\n    \"accountNumber\": \"123456789\",\n    \"accountName\": \"John Doe\"\n  }\n}" }
+          }
+        },
+        { "name": "Principal Eligibility", "request": { "method": "GET", "url": "{{baseUrl}}/withdrawals/principal/{{investmentId}}/eligibility" } },
+        { "name": "List Withdrawals", "request": { "method": "GET", "url": "{{baseUrl}}/withdrawals" } },
+        { "name": "Get Withdrawal", "request": { "method": "GET", "url": "{{baseUrl}}/withdrawals/{{withdrawalId}}" } }
+      ]
+    },
+    {
+      "name": "Referrals & ROI",
+      "item": [
+        { "name": "Direct Referrals", "request": { "method": "GET", "url": "{{baseUrl}}/referrals" } },
+        { "name": "Referral Tree", "request": { "method": "GET", "url": "{{baseUrl}}/referrals/tree" } },
+        { "name": "Referrals by Level", "request": { "method": "GET", "url": "{{baseUrl}}/referrals/level/1" } },
+        { "name": "Commissions", "request": { "method": "GET", "url": "{{baseUrl}}/referrals/commissions" } },
+        { "name": "Commission Stats", "request": { "method": "GET", "url": "{{baseUrl}}/referrals/commissions/stats" } },
+        { "name": "Referral Stats", "request": { "method": "GET", "url": "{{baseUrl}}/referrals/stats" } },
+        { "name": "ROI Summary", "request": { "method": "GET", "url": "{{baseUrl}}/roi" } },
+        { "name": "ROI History", "request": { "method": "GET", "url": "{{baseUrl}}/roi/history" } }
+      ]
+    },
+    {
+      "name": "Admin",
+      "auth": {
+        "type": "bearer",
+        "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+      },
+      "item": [
+        { "name": "Dashboard Stats", "request": { "method": "GET", "url": "{{baseUrl}}/admin/dashboard" } },
+        { "name": "List Users", "request": { "method": "GET", "url": "{{baseUrl}}/admin/users?page=1&limit=10" } },
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/users",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Jane\",\n  \"email\": \"jane@example.com\",\n  \"mobile\": \"+15550002222\",\n  \"password\": \"SecurePass123\"\n}" }
+          }
+        },
+        { "name": "Get User", "request": { "method": "GET", "url": "{{baseUrl}}/admin/users/{{userId}}" } },
+        {
+          "name": "Suspend User",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/admin/users/{{userId}}/status",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"SUSPENDED\"\n}" }
+          }
+        },
+        {
+          "name": "Adjust Wallet",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/users/{{userId}}/wallet/adjust",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 1000,\n  \"reason\": \"Manual deposit\",\n  \"idempotencyKey\": \"adj-key-001\"\n}" }
+          }
+        },
+        { "name": "User Referral Tree", "request": { "method": "GET", "url": "{{baseUrl}}/admin/users/{{userId}}/referral-tree" } },
+        { "name": "List Investments", "request": { "method": "GET", "url": "{{baseUrl}}/admin/investments" } },
+        {
+          "name": "Set Global ROI",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/roi/global",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"roiPercent\": 8,\n  \"period\": \"2026-10\"\n}" }
+          }
+        },
+        { "name": "Global ROI History", "request": { "method": "GET", "url": "{{baseUrl}}/admin/roi/global" } },
+        {
+          "name": "Set User ROI",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/roi/user/{{userId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"roiPercent\": 10,\n  \"period\": \"2026-10\"\n}" }
+          }
+        },
+        { "name": "Get User ROI", "request": { "method": "GET", "url": "{{baseUrl}}/admin/roi/user/{{userId}}" } },
+        { "name": "Delete User ROI", "request": { "method": "DELETE", "url": "{{baseUrl}}/admin/roi/user/{{userId}}?period=2026-10" } },
+        {
+          "name": "Set Investment ROI",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/roi/investment/{{investmentId}}",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"roiPercent\": 12,\n  \"period\": \"2026-10\"\n}" }
+          }
+        },
+        {
+          "name": "Run ROI Job Manually",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/admin/roi/process",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"period\": \"2026-10\"\n}" }
+          }
+        },
+        { "name": "ROI Earnings History", "request": { "method": "GET", "url": "{{baseUrl}}/admin/roi/history" } },
+        { "name": "ROI Configurations", "request": { "method": "GET", "url": "{{baseUrl}}/admin/roi/configurations" } },
+        { "name": "List Withdrawals", "request": { "method": "GET", "url": "{{baseUrl}}/admin/withdrawals" } },
+        { "name": "Get Withdrawal", "request": { "method": "GET", "url": "{{baseUrl}}/admin/withdrawals/{{withdrawalId}}" } },
+        {
+          "name": "Approve Withdrawal",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/admin/withdrawals/{{withdrawalId}}/approve",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"remarks\": \"Verified\"\n}" }
+          }
+        },
+        {
+          "name": "Reject Withdrawal",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/admin/withdrawals/{{withdrawalId}}/reject",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Invalid bank details\"\n}" }
+          }
+        },
+        { "name": "Complete Withdrawal", "request": { "method": "PATCH", "url": "{{baseUrl}}/admin/withdrawals/{{withdrawalId}}/complete" } },
+        { "name": "Commissions", "request": { "method": "GET", "url": "{{baseUrl}}/admin/commissions" } },
+        { "name": "Transactions", "request": { "method": "GET", "url": "{{baseUrl}}/admin/transactions" } },
+        { "name": "Audit Logs", "request": { "method": "GET", "url": "{{baseUrl}}/admin/audit-logs" } },
+        { "name": "System Settings", "request": { "method": "GET", "url": "{{baseUrl}}/admin/settings" } }
+      ]
+    }
+  ]
+}
