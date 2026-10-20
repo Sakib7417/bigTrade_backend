@@ -1,5 +1,8 @@
 FROM node:20-alpine
 
+# Prisma engines need openssl + libc compat on Alpine (musl)
+RUN apk add --no-cache openssl libc6-compat
+
 WORKDIR /app
 
 COPY package*.json ./
