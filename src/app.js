@@ -10,6 +10,9 @@ import swaggerUi from 'swagger-ui-express';
 
 const app = express();
 
+// Behind nginx reverse proxy — trust X-Forwarded-For so rate limiting + IPs work
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
