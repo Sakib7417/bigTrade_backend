@@ -16,9 +16,10 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet());
 
-// CORS
+// CORS — comma-separated origins supported (e.g. "https://a.com,https://b.com")
+const allowedOrigins = (process.env.CORS_ORIGIN || '*').split(',').map((o) => o.trim());
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+  origin: allowedOrigins.includes('*') ? true : allowedOrigins,
   credentials: true,
 }));
 
