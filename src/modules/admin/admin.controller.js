@@ -148,6 +148,15 @@ export class AdminController {
     }
   }
 
+  async getPayoutTreasury(req, res, next) {
+    try {
+      const data = await withdrawalService.getTreasuryStatus();
+      res.status(200).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getWithdrawalById(req, res, next) {
     try {
       const { withdrawalId } = req.params;

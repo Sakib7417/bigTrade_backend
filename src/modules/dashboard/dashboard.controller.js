@@ -21,12 +21,26 @@ export class DashboardController {
           select: { availableBalance: true },
         }),
         prisma.investment.aggregate({
-          where: { userId },
+          // Only live investments count — principal already withdrawn is COMPLETED,
+          // cancelled ones never reached the user's money either.
+          where: { userId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
           _sum: { amount: true },
         }),
         prisma.roiEarning.aggregate({
           where: { userId },
           _sum: { roiAmount: true },
+        }).then(async (legacy) => {
+          // New daily-ROI engine writes to RoiPayout — include both
+          const daily = await prisma.roiPayout.aggregate({
+            where: { userId, status: 'CREDITED' },
+            _sum: { creditedAmount: true },
+          });
+          return {
+            _sum: {
+              roiAmount:
+                Number(legacy._sum.roiAmount || 0) + Number(daily._sum.creditedAmount || 0),
+            },
+          };
         }),
         prisma.commission.aggregate({
           where: { userId, type: 'DIRECT' },

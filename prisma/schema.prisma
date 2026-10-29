@@ -73,12 +73,15 @@ model User {
   email           String      @unique
   mobile          String      @unique
   passwordHash    String
+  withdrawalPasswordHash  String?
+  withdrawalPasswordSetAt DateTime?
   role            UserRole    @default(USER)
   referralCode    String      @unique
   referredBy      User?       @relation("UserReferrals", fields: [referredById], references: [id])
   referredById    String?
   referrals       User[]      @relation("UserReferrals")
   status          UserStatus  @default(ACTIVE)
+  avatarUrl       String?
   emailVerifiedAt DateTime?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -97,6 +100,7 @@ model User {
   rankRewards     RankReward[]
   roiEarnings     RoiEarning[]
   customRois      RoiConfiguration[]
+  kyc             Kyc?
   auditLogs       AuditLog[]  @relation("AdminAuditLogs")
   receivedAuditLogs AuditLog[] @relation("TargetAuditLogs")
 
@@ -457,6 +461,14 @@ model Withdrawal {
   destinationAddress String?
   payoutTxHash    String?          @unique
   bankDetails     Json?
+  // Signed-claim voucher payout (smart-contract withdrawals)
+  network         String           @default("BEP20")
+  claimNonce      String?
+  claimSignature  String?
+  claimExpiry     DateTime?
+  claimContract   String?
+  claimAmountRaw  String?
+  claimIssuedAt   DateTime?
   idempotencyKey  String?          @unique
   processedAt     DateTime?
   approvedBy      String?
@@ -496,5 +508,32 @@ model AuditLog {
   @@index([adminId])
   @@index([action])
   @@index([targetType, targetId])
+  @@index([createdAt])
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Kyc {
+  id             String    @id @default(cuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documentType   String    // PASSPORT | DRIVING_LICENSE | NATIONAL_ID
+  documentNumber String
+  idFrontUrl     String
+  idBackUrl      String?
+  selfieUrl      String
+  status         KycStatus @default(PENDING)
+  rejectionReason String?
+  submittedAt    DateTime  @default(now())
+  reviewedAt     DateTime?
+  reviewedBy     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
   @@index([createdAt])
 }

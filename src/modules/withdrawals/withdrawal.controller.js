@@ -6,13 +6,14 @@ const withdrawalService = new WithdrawalService();
 export class WithdrawalController {
   async createWithdrawal(req, res, next) {
     try {
-      const { amount, destinationAddress, bankDetails, idempotencyKey } = req.body;
+      const { amount, destinationAddress, bankDetails, idempotencyKey, withdrawalPassword } = req.body;
       const result = await withdrawalService.createWithdrawal(
         req.user.id,
         amount,
         destinationAddress,
         bankDetails,
-        idempotencyKey
+        idempotencyKey,
+        withdrawalPassword
       );
 
       res.status(result.duplicate ? 200 : 201).json({
@@ -20,7 +21,7 @@ export class WithdrawalController {
         message: result.duplicate
           ? 'Withdrawal request already exists'
           : 'Withdrawal request created successfully',
-        data: { withdrawal: result.withdrawal },
+        data: { withdrawal: result.withdrawal, claim: result.claim ?? null },
       });
     } catch (error) {
       next(error);
@@ -29,13 +30,15 @@ export class WithdrawalController {
 
   async createPrincipalWithdrawal(req, res, next) {
     try {
-      const { investmentId, destinationAddress, bankDetails, idempotencyKey } = req.body;
+      const { investmentId, amount, destinationAddress, bankDetails, idempotencyKey, withdrawalPassword } = req.body;
       const result = await withdrawalService.createPrincipalWithdrawal(
         req.user.id,
         investmentId,
         destinationAddress,
         bankDetails,
-        idempotencyKey
+        idempotencyKey,
+        amount,
+        withdrawalPassword
       );
 
       res.status(result.duplicate ? 200 : 201).json({
@@ -46,6 +49,7 @@ export class WithdrawalController {
         data: {
           withdrawal: result.withdrawal,
           eligibility: result.eligibility,
+          claim: result.claim ?? null,
         },
       });
     } catch (error) {
@@ -97,6 +101,39 @@ export class WithdrawalController {
       res.status(200).json({
         success: true,
         data: { withdrawal },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Submit the on-chain claim() transaction hash → verify payout → complete.
+  async confirmClaim(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { txHash } = req.body;
+      const withdrawal = await withdrawalService.confirmClaim(id, req.user.id, txHash);
+
+      res.status(200).json({
+        success: true,
+        message: 'Withdrawal paid out on-chain',
+        data: { withdrawal },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Re-sign an expired voucher (old signature is void on-chain anyway).
+  async reissueVoucher(req, res, next) {
+    try {
+      const { id } = req.params;
+      const result = await withdrawalService.reissueVoucher(id, req.user.id);
+
+      res.status(200).json({
+        success: true,
+        message: 'New claim voucher issued',
+        data: result,
       });
     } catch (error) {
       next(error);

@@ -12,6 +12,7 @@ import supportRoutes, { supportAdminRouter } from './support.routes.js';
 import referralRoutes from './referral.routes.js';
 import adminRoutes from './admin.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
+import kycRoutes from './kyc.routes.js';
 
 const router = express.Router();
 
@@ -24,6 +25,7 @@ router.use(`${apiVersion}/users`, usersRoutes);
 router.use(`${apiVersion}/investments`, investmentRoutes);
 router.use(`${apiVersion}/wallet`, walletRoutes);
 router.use(`${apiVersion}/withdrawals`, withdrawalRoutes);
+router.use(`${apiVersion}/kyc`, kycRoutes);
 router.use(`${apiVersion}/deposits`, depositRoutes);
 router.use(`${apiVersion}/roi`, roiRoutes);
 router.use(`${apiVersion}/referrals`, referralRoutes);

@@ -392,6 +392,7 @@ export class DepositService {
       network,
       asset: 'USDT',
       contract: chain.usdtContract ?? null,
+      usdtDecimals: chain.usdtDecimals ?? 6,
       depositWallet: picked,
       requiredConfirmations: chain.requiredConfirmations,
       enabled: Boolean(picked && chain.usdtContract && chain.rpcUrl),

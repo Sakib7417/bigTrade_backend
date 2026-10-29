@@ -361,8 +361,8 @@ export class AuthService {
     logger.info('User logged out');
   }
 
-  async generateUniqueReferralCode(name) {
-    const prefix = name.substring(0, 3).toUpperCase();
+  async generateUniqueReferralCode() {
+    const prefix = 'BIG';
     let code = generateReferralCode(prefix);
     let attempts = 0;
 
@@ -383,3 +383,5 @@ export class AuthService {
     return generateReferralCode();
   }
 }
+
+export const authService = new AuthService();

@@ -5,6 +5,10 @@ import { WalletService } from '../wallet/wallet.service.js';
 import { InvestmentService } from '../investments/investment.service.js';
 import { toDecimal, roundMoney } from '../../utils/money.js';
 import { getProvider, ERC20_TRANSFER_ABI } from '../../config/blockchain.js';
+import { autoClaimAvailable, signClaimVoucher, verifyBep20Payout } from '../../utils/payout.js';
+import { kycService } from '../kyc/kyc.service.js';
+import { userService } from '../users/user.service.js';
+import { verifyTronPayout, isTronAddress, tronUsdtBalance, tronToHex } from '../../utils/tron.js';
 import config from '../../config/env.js';
 import logger from '../../config/logger.js';
 
@@ -56,10 +60,60 @@ export class WithdrawalService {
     return { from: transfer.args.from, amount: sent };
   }
 
-  async createWithdrawal(userId, amount, destinationAddress, bankDetails, idempotencyKey = null) {
-    const value = toDecimal(amount);
+  // BEP20 (0x…) vs TRC20 (T…) — decides which payout vault the claim targets
+  detectNetwork(destinationAddress) {
+    if (!destinationAddress) {
+      throw new ConflictError('A destination wallet address is required');
+    }
+    if (isTronAddress(destinationAddress)) return 'TRC20';
+    if (ethers.isAddress(destinationAddress)) return 'BEP20';
+    throw new ConflictError('Invalid destination address (BEP20 0x… or TRC20 T…)');
+  }
 
-    return await prisma.$transaction(async (tx) => {
+  // Post-commit: sign a claim voucher for a PENDING withdrawal and mark it
+  // PROCESSING. If signing fails the withdrawal stays PENDING for admin payout.
+  async tryIssueVoucher(withdrawalId) {
+    const w = await prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
+    if (!w || w.status !== 'PENDING') return null;
+
+    let network;
+    try {
+      network = this.detectNetwork(w.destinationAddress);
+    } catch {
+      return null;
+    }
+    if (!autoClaimAvailable(network, w.netAmount)) return null;
+
+    try {
+      const claim = await signClaimVoucher(network, w.destinationAddress, w.netAmount);
+      const withdrawal = await prisma.withdrawal.update({
+        where: { id: withdrawalId },
+        data: {
+          status: 'PROCESSING',
+          network,
+          claimNonce: claim.nonce,
+          claimSignature: claim.signature,
+          claimExpiry: new Date(claim.expiry * 1000),
+          claimContract: claim.contract,
+          claimAmountRaw: claim.amountRaw,
+          claimIssuedAt: new Date(),
+        },
+      });
+      logger.info(`Claim voucher issued: withdrawal ${withdrawalId} on ${network}`);
+      return { withdrawal, claim };
+    } catch (error) {
+      logger.warn(`Claim voucher signing skipped for ${withdrawalId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  async createWithdrawal(userId, amount, destinationAddress, bankDetails, idempotencyKey = null, withdrawalPassword = null) {
+    const value = toDecimal(amount);
+    const network = this.detectNetwork(destinationAddress);
+    await kycService.requireApproved(userId);
+    await userService.assertWithdrawalReady(userId, withdrawalPassword);
+
+    const result = await prisma.$transaction(async (tx) => {
       // Idempotency: replayed request returns the original withdrawal
       if (idempotencyKey) {
         const existing = await tx.withdrawal.findUnique({ where: { idempotencyKey } });
@@ -91,6 +145,7 @@ export class WithdrawalService {
           status: 'PENDING',
           destinationAddress,
           bankDetails,
+          network,
           idempotencyKey,
         },
       });
@@ -134,11 +189,22 @@ export class WithdrawalService {
 
       return { withdrawal, duplicate: false };
     });
+
+    if (!result.duplicate) {
+      const issued = await this.tryIssueVoucher(result.withdrawal.id);
+      if (issued) {
+        result.withdrawal = issued.withdrawal;
+        result.claim = issued.claim;
+      }
+    }
+    return result;
   }
 
   // Principal withdrawal: age-based capital deduction (10%→0% over 150 days)
-  async createPrincipalWithdrawal(userId, investmentId, destinationAddress, bankDetails, idempotencyKey = null) {
-    return await prisma.$transaction(async (tx) => {
+  async createPrincipalWithdrawal(userId, investmentId, destinationAddress, bankDetails, idempotencyKey = null, requestedAmount = null, withdrawalPassword = null) {
+    await kycService.requireApproved(userId);
+    await userService.assertWithdrawalReady(userId, withdrawalPassword);
+    const result = await prisma.$transaction(async (tx) => {
       if (idempotencyKey) {
         const existing = await tx.withdrawal.findUnique({ where: { idempotencyKey } });
         if (existing) return { withdrawal: existing, duplicate: true };
@@ -166,12 +232,13 @@ export class WithdrawalService {
         throw new ConflictError('No withdrawable principal');
       }
 
-      // Only the remaining principal can be withdrawn once
+      // Open withdrawals still hold an allocation — completed ones already
+      // shrank the investment principal, so counting them would double-charge.
       const existingPrincipalWithdrawals = await tx.withdrawal.findMany({
         where: {
           investmentId,
           kind: 'PRINCIPAL',
-          status: { in: ['PENDING', 'APPROVED', 'PROCESSING', 'COMPLETED'] },
+          status: { in: ['PENDING', 'APPROVED', 'PROCESSING'] },
         },
       });
 
@@ -185,30 +252,47 @@ export class WithdrawalService {
         throw new ConflictError('Principal already withdrawn or pending withdrawal');
       }
 
+      // Custom amount (post-penalty units) — blank means "withdraw everything".
+      const requested = requestedAmount != null ? toDecimal(requestedAmount) : withdrawable;
+      if (requested.lte(0)) {
+        throw new ConflictError('Enter a valid amount');
+      }
+      if (requested.gt(withdrawable)) {
+        throw new ConflictError(`Only $${withdrawable} is available to withdraw`);
+      }
+      if (requested.lt(withdrawable) && requested.lt(10)) {
+        throw new ConflictError('Minimum partial withdrawal is $10');
+      }
+
+      const isFull = requested.gte(withdrawable);
+
       const wallet = await walletService.lockWalletRow(tx, userId);
 
       const feePercent = toDecimal(await this.getWithdrawalFeePercent());
-      const fee = roundMoney(withdrawable.mul(feePercent).div(100));
-      const netAmount = withdrawable.sub(fee);
+      const fee = roundMoney(requested.mul(feePercent).div(100));
+      const netAmount = requested.sub(fee);
 
-      // Mark investment as completed once principal is withdrawn
-      await tx.investment.update({
-        where: { id: investmentId },
-        data: { status: 'COMPLETED' },
-      });
+      // Gross principal this payout will consume (deduction is proportional).
+      // The investment is only adjusted when the withdrawal COMPLETES —
+      // shrinking it here would corrupt eligibility for the remainder.
+      const proportionalPenalty = (isFull
+        ? toDecimal(investment.principal)
+        : roundMoney(requested.mul(100).div(toDecimal(100).sub(eligibility.penaltyPercent)))
+      ).sub(requested);
 
       const withdrawal = await tx.withdrawal.create({
         data: {
           userId,
           kind: 'PRINCIPAL',
-          amount: withdrawable,
+          amount: requested,
           fee,
           netAmount,
-          principalPenalty: eligibility.penalty,
+          principalPenalty: proportionalPenalty,
           investmentId,
           status: 'PENDING',
           destinationAddress,
           bankDetails,
+          network: this.detectNetwork(destinationAddress),
           idempotencyKey,
         },
       });
@@ -218,7 +302,7 @@ export class WithdrawalService {
           userId,
           walletId: wallet.id,
           type: 'WITHDRAWAL',
-          amount: withdrawable,
+          amount: requested,
           currency: 'USD',
           direction: 'DEBIT',
           referenceType: 'WITHDRAWAL',
@@ -228,7 +312,8 @@ export class WithdrawalService {
           metadata: {
             investmentId,
             early: eligibility.isEarly,
-            principalPenalty: eligibility.penalty,
+            principalPenalty: proportionalPenalty,
+            partial: !isFull,
           },
           idempotencyKey: idempotencyKey ? `${idempotencyKey}:withdrawal` : null,
         },
@@ -251,11 +336,20 @@ export class WithdrawalService {
       });
 
       logger.info(
-        `Principal withdrawal created: User ${userId}, Investment ${investmentId}, Amount ${withdrawable}, Early: ${eligibility.isEarly}`
+        `Principal withdrawal created: User ${userId}, Investment ${investmentId}, Amount ${requested}, Early: ${eligibility.isEarly}`
       );
 
       return { withdrawal, duplicate: false, eligibility };
     });
+
+    if (!result.duplicate) {
+      const issued = await this.tryIssueVoucher(result.withdrawal.id);
+      if (issued) {
+        result.withdrawal = issued.withdrawal;
+        result.claim = issued.claim;
+      }
+    }
+    return result;
   }
 
   async getPrincipalEligibility(userId, investmentId) {
@@ -277,7 +371,9 @@ export class WithdrawalService {
       where: {
         investmentId,
         kind: 'PRINCIPAL',
-        status: { in: ['PENDING', 'APPROVED', 'PROCESSING', 'COMPLETED'] },
+        // Only in-flight requests reserve principal — completed ones already
+        // reduced investment.principal at settlement.
+        status: { in: ['PENDING', 'APPROVED', 'PROCESSING'] },
       },
       select: { amount: true },
     });
@@ -337,6 +433,223 @@ export class WithdrawalService {
     return withdrawal;
   }
 
+  // User-submitted claim tx: verify the vault paid out on-chain, then settle.
+  async confirmClaim(withdrawalId, userId, txHash) {
+    const withdrawal = await prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
+
+    if (!withdrawal) {
+      throw new NotFoundError('Withdrawal not found');
+    }
+    if (withdrawal.userId !== userId) {
+      throw new ConflictError('Not authorized to confirm this withdrawal');
+    }
+    // Idempotent replay
+    if (withdrawal.status === 'COMPLETED' && withdrawal.payoutTxHash === txHash) {
+      return withdrawal;
+    }
+    if (withdrawal.status !== 'PROCESSING' || !withdrawal.claimSignature) {
+      throw new ConflictError('No active claim voucher for this withdrawal');
+    }
+    // No hash → auto-detect: scan the payout contract's recent txs for a
+    // payout to this user. Lets the UI auto-verify a claim that already landed.
+    if (!txHash) {
+      txHash = await this.findClaimTx(withdrawal);
+      if (!txHash) {
+        throw new ConflictError('Claim transaction not found on-chain yet — wait a few seconds and retry');
+      }
+    }
+    const used = await prisma.withdrawal.findUnique({ where: { payoutTxHash: txHash } });
+    if (used) {
+      throw new ConflictError('This transaction hash was already used for another withdrawal');
+    }
+
+    const verify =
+      withdrawal.network === 'TRC20'
+        ? await verifyTronPayout(
+            txHash,
+            withdrawal.claimContract,
+            withdrawal.destinationAddress,
+            withdrawal.claimAmountRaw
+          )
+        : await verifyBep20Payout(
+            txHash,
+            withdrawal.claimContract,
+            withdrawal.destinationAddress,
+            withdrawal.claimAmountRaw
+          );
+
+    if (!verify.found) {
+      throw new ConflictError('Claim transaction not found on-chain yet — wait a few seconds and retry');
+    }
+    if (verify.failed) {
+      throw new ConflictError('Claim transaction failed on-chain — funds were not paid out');
+    }
+    if (verify.notPayout) {
+      throw new ConflictError('Transaction is not a vault payout to the withdrawal address');
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw`SELECT * FROM "Withdrawal" WHERE id = ${withdrawalId} FOR UPDATE`;
+      const locked = rows[0];
+      if (!locked || locked.status !== 'PROCESSING') {
+        throw new ConflictError('Withdrawal status changed — retry');
+      }
+
+      if (locked.kind !== 'PRINCIPAL') {
+        await walletService.settleLockedTx(tx, locked.userId, toDecimal(locked.amount));
+      }
+
+      const updated = await tx.withdrawal.update({
+        where: { id: withdrawalId },
+        data: {
+          status: 'COMPLETED',
+          payoutTxHash: txHash,
+          completedAt: new Date(),
+          processedAt: locked.processedAt ?? new Date(),
+        },
+      });
+
+      await tx.walletTransaction.updateMany({
+        where: { referenceType: 'WITHDRAWAL', referenceId: withdrawalId },
+        data: { status: 'COMPLETED', description: 'Paid via smart-contract claim' },
+      });
+
+      await this.consumePrincipalTx(tx, locked);
+
+      logger.info(`Withdrawal completed via claim: ${withdrawalId}, tx ${txHash}`);
+      return updated;
+    });
+  }
+
+  // Once a PRINCIPAL withdrawal is actually paid, shrink the investment by the
+  // gross principal consumed (amount + proportional deduction). Reaching zero
+  // closes the investment — ROI then accrues only on remaining capital.
+  async consumePrincipalTx(tx, withdrawal) {
+    if (withdrawal.kind !== 'PRINCIPAL' || !withdrawal.investmentId) return;
+    const gross = toDecimal(withdrawal.amount).add(toDecimal(withdrawal.principalPenalty || 0));
+    if (gross.lte(0)) return;
+
+    const inv = await tx.investment.findUnique({
+      where: { id: withdrawal.investmentId },
+      select: { principal: true, totalRoiEarned: true },
+    });
+    if (!inv) return;
+
+    const remaining = toDecimal(inv.principal).sub(gross);
+    if (remaining.lte(0.005)) {
+      await tx.investment.update({
+        where: { id: withdrawal.investmentId },
+        data: { principal: 0, amount: 0, status: 'COMPLETED' },
+      });
+      return;
+    }
+
+    // Cap tracks principal × multiplier — shrink it with the principal so a
+    // withdrawal can't leave behind a large earning allowance. Never drop it
+    // below what was already earned (paid income stays accounted).
+    const capMultiplier = await investmentService.getEarningCapMultiplier(tx);
+    let newCap = remaining.mul(capMultiplier);
+    if (newCap.lt(toDecimal(inv.totalRoiEarned))) {
+      newCap = toDecimal(inv.totalRoiEarned);
+    }
+
+    // Below the platform minimum it can't earn ROI — mark it right away
+    // instead of waiting for the daily job to flip it.
+    const minInvestment = await investmentService.getMinInvestment();
+    await tx.investment.update({
+      where: { id: withdrawal.investmentId },
+      data: {
+        principal: remaining,
+        amount: { decrement: gross },
+        earningCap: newCap,
+        ...(remaining.lt(minInvestment) ? { status: 'INACTIVE' } : {}),
+      },
+    });
+  }
+
+  // Scan the payout vault's recent transactions for a payout to this
+  // destination covering the voucher amount — used when the user submits no
+  // hash (UI auto-verify) or their claim settled before the wallet reported it.
+  async findClaimTx(w) {
+    try {
+      if (w.network === 'TRC20') {
+        const res = await fetch(
+          `${config.tron.rpcUrl}/v1/contracts/${tronToHex(w.claimContract)}/transactions?limit=20&order_by=block_timestamp,desc`,
+          { signal: AbortSignal.timeout(15000) }
+        );
+        const { data } = await res.json();
+        for (const t of data ?? []) {
+          if (t.ret?.[0]?.contractRet !== 'SUCCESS') continue;
+          if (await prisma.withdrawal.findUnique({ where: { payoutTxHash: t.txID } })) continue;
+          const v = await verifyTronPayout(
+            t.txID, w.claimContract, w.destinationAddress, w.claimAmountRaw
+          ).catch(() => null);
+          if (v?.found && !v.failed && !v.notPayout) return t.txID;
+        }
+        return null;
+      }
+
+      const provider = getProvider();
+      const latest = await provider.getBlockNumber();
+      const logs = await provider.getLogs({
+        address: config.blockchain.usdtContract,
+        topics: [
+          ethers.id('Transfer(address,address,uint256)'),
+          ethers.zeroPadValue(w.claimContract, 32),
+          ethers.zeroPadValue(w.destinationAddress, 32),
+        ],
+        fromBlock: Math.max(0, latest - 20000),
+        toBlock: latest,
+      });
+      for (let i = logs.length - 1; i >= 0; i--) {
+        const txHash = logs[i].transactionHash;
+        if (await prisma.withdrawal.findUnique({ where: { payoutTxHash: txHash } })) continue;
+        const v = await verifyBep20Payout(
+          txHash, w.claimContract, w.destinationAddress, w.claimAmountRaw
+        ).catch(() => null);
+        if (v?.found) return txHash;
+      }
+      return null;
+    } catch (error) {
+      logger.warn(`Claim auto-detect failed for ${w.id}: ${error.message}`);
+      return null;
+    }
+  }
+
+  // Re-sign a voucher after the previous one expired (contract rejects expired
+  // vouchers, so the old signature is dead weight anyway).
+  async reissueVoucher(withdrawalId, userId) {
+    const w = await prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
+
+    if (!w) {
+      throw new NotFoundError('Withdrawal not found');
+    }
+    if (w.userId !== userId) {
+      throw new ConflictError('Not authorized to reissue this voucher');
+    }
+    if (w.status !== 'PROCESSING' || !w.claimSignature) {
+      throw new ConflictError('This withdrawal has no claim voucher to reissue');
+    }
+    if (w.claimExpiry && new Date(w.claimExpiry) > new Date()) {
+      throw new ConflictError('Voucher is still valid — claim it before it expires');
+    }
+
+    const claim = await signClaimVoucher(w.network, w.destinationAddress, w.netAmount);
+    const withdrawal = await prisma.withdrawal.update({
+      where: { id: withdrawalId },
+      data: {
+        claimNonce: claim.nonce,
+        claimSignature: claim.signature,
+        claimExpiry: new Date(claim.expiry * 1000),
+        claimContract: claim.contract,
+        claimAmountRaw: claim.amountRaw,
+        claimIssuedAt: new Date(),
+      },
+    });
+
+    return { withdrawal, claim };
+  }
+
   async approveWithdrawal(withdrawalId, adminId, remarks = null, ipAddress = null) {
     return await prisma.$transaction(async (tx) => {
       // Lock withdrawal row to prevent double approval
@@ -349,6 +662,12 @@ export class WithdrawalService {
 
       if (withdrawal.status !== 'PENDING' && withdrawal.status !== 'PROCESSING') {
         throw new ConflictError('Withdrawal is not in a processable status');
+      }
+
+      // A live voucher could still be claimed on-chain — manual settlement now
+      // would pay the user twice. Wait for expiry (or user claim) first.
+      if (withdrawal.claimSignature && withdrawal.claimExpiry && new Date(withdrawal.claimExpiry) > new Date()) {
+        throw new ConflictError('An active claim voucher exists — let the user claim or wait for it to expire');
       }
 
       if (withdrawal.kind !== 'PRINCIPAL') {
@@ -415,11 +734,16 @@ export class WithdrawalService {
         throw new ConflictError('Withdrawal is not in a processable status');
       }
 
+      if (withdrawal.claimSignature && withdrawal.claimExpiry && new Date(withdrawal.claimExpiry) > new Date()) {
+        throw new ConflictError('An active claim voucher exists — let the user claim or wait for it to expire');
+      }
+
       if (withdrawal.kind === 'PRINCIPAL') {
-        // Restore investment so user retains the position
+        // Legacy requests closed the investment at creation — reactivate it.
+        // New requests never touch the investment until payout, so this is a no-op.
         if (withdrawal.investmentId) {
-          await tx.investment.update({
-            where: { id: withdrawal.investmentId },
+          await tx.investment.updateMany({
+            where: { id: withdrawal.investmentId, status: 'COMPLETED' },
             data: { status: 'ACTIVE' },
           });
         }
@@ -528,6 +852,8 @@ export class WithdrawalService {
         },
       });
 
+      await this.consumePrincipalTx(tx, withdrawal);
+
       await tx.auditLog.create({
         data: {
           adminId,
@@ -606,6 +932,46 @@ export class WithdrawalService {
     }
 
     return withdrawal;
+  }
+
+  // On-chain payout vault balances (admin panel)
+  async getTreasuryStatus() {
+    const out = {
+      autoClaimEnabled: config.payout.autoClaimEnabled,
+      autoClaimMaxUsd: config.payout.autoClaimMaxUsd,
+      vaults: [],
+    };
+
+    if (config.payout.contractBep20) {
+      let balanceUsdt = null;
+      try {
+        const usdt = new ethers.Contract(
+          config.blockchain.usdtContract,
+          ['function balanceOf(address) view returns (uint256)'],
+          getProvider()
+        );
+        balanceUsdt = ethers.formatUnits(
+          await usdt.balanceOf(config.payout.contractBep20),
+          config.blockchain.usdtDecimals
+        );
+      } catch (error) {
+        logger.warn(`BEP20 vault balance read failed: ${error.message}`);
+      }
+      out.vaults.push({ network: 'BEP20', contract: config.payout.contractBep20, balanceUsdt });
+    }
+
+    if (config.payout.contractTrc20) {
+      let balanceUsdt = null;
+      try {
+        const raw = await tronUsdtBalance(config.payout.contractTrc20);
+        balanceUsdt = toDecimal(raw.toString()).div(10 ** config.tron.usdtDecimals).toFixed(2);
+      } catch (error) {
+        logger.warn(`TRC20 vault balance read failed: ${error.message}`);
+      }
+      out.vaults.push({ network: 'TRC20', contract: config.payout.contractTrc20, balanceUsdt });
+    }
+
+    return out;
   }
 
   async getMinWithdrawal() {

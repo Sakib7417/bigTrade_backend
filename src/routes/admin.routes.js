@@ -42,6 +42,7 @@ router.get('/investments/:investmentId', checkInvestmentExists, adminController.
 router.patch('/investments/:investmentId/status', checkInvestmentExists, validate(updateInvestmentStatusSchema), adminController.updateInvestmentStatus.bind(adminController));
 
 // Withdrawals
+router.get('/payout-treasury', adminController.getPayoutTreasury.bind(adminController));
 router.get('/withdrawals', adminController.getWithdrawals.bind(adminController));
 router.get('/withdrawals/:withdrawalId', checkWithdrawalExists, adminController.getWithdrawalById.bind(adminController));
 router.patch('/withdrawals/:withdrawalId/approve', checkWithdrawalExists, validate(approveWithdrawalSchema), adminController.approveWithdrawal.bind(adminController));

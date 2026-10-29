@@ -151,4 +151,41 @@ router.get('/', authenticate, withdrawalController.getWithdrawals.bind(withdrawa
  */
 router.get('/:id', authenticate, withdrawalController.getWithdrawalById.bind(withdrawalController));
 
+/**
+ * @swagger
+ * /api/v1/withdrawals/{id}/claim-tx:
+ *   post:
+ *     summary: Submit the on-chain claim() transaction hash to settle the withdrawal
+ *     tags: [Withdrawals]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [txHash]
+ *             properties:
+ *               txHash:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Withdrawal paid out on-chain
+ */
+router.post('/:id/claim-tx', authenticate, withdrawalController.confirmClaim.bind(withdrawalController));
+
+/**
+ * @swagger
+ * /api/v1/withdrawals/{id}/revoucher:
+ *   post:
+ *     summary: Reissue a claim voucher after expiry
+ *     tags: [Withdrawals]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: New claim voucher issued
+ */
+router.post('/:id/revoucher', authenticate, withdrawalController.reissueVoucher.bind(withdrawalController));
+
 export default router;

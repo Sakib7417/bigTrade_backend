@@ -6,20 +6,26 @@ const bankDetailsSchema = z.object({
   accountName: z.string().min(1, 'Account name is required'),
 });
 
-const bscAddress = z
+const cryptoAddress = z
   .string()
-  .regex(/^0x[0-9a-fA-F]{40}$/, 'Enter a valid BSC wallet address (0x…)');
+  .regex(
+    /^(0x[0-9a-fA-F]{40}|T[1-9A-HJ-NP-Za-km-z]{33})$/,
+    'Enter a valid BSC (0x…) or Tron (T…) wallet address'
+  );
 
 export const createWithdrawalSchema = z.object({
   amount: z.number().min(10, 'Minimum withdrawal is $10'),
-  destinationAddress: bscAddress,
+  destinationAddress: cryptoAddress,
+  withdrawalPassword: z.string().min(1, 'Withdrawal password is required'),
   bankDetails: bankDetailsSchema.optional(),
   idempotencyKey: z.string().min(8).max(128).optional(),
 });
 
 export const createPrincipalWithdrawalSchema = z.object({
   investmentId: z.string().min(1, 'Investment ID is required'),
-  destinationAddress: bscAddress,
+  amount: z.number().positive('Enter a valid amount').optional(),
+  destinationAddress: cryptoAddress,
+  withdrawalPassword: z.string().min(1, 'Withdrawal password is required'),
   bankDetails: bankDetailsSchema.optional(),
   idempotencyKey: z.string().min(8).max(128).optional(),
 });

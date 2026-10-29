@@ -79,18 +79,27 @@ export async function verifyTronUsdtTransfer(txHash, toWallets) {
   const usdtHex = tronToHex(config.tron.usdtContract).toLowerCase();
   const toSet = new Set(toWallets.map((w) => tronToHex(w).toLowerCase()));
 
+  // /wallet/* (full node) indexes a tx within ~3-5s of its block; the
+  // walletsolidity API only exposes solidified blocks (~60s lag) which made
+  // fresh deposits look "not found" right after the user sent them.
   const [tx, info, now] = await Promise.all([
-    tronPost('/walletsolidity/gettransactionbyid', { value: txHash }),
-    tronPost('/walletsolidity/gettransactioninfobyid', { value: txHash }),
+    tronPost('/wallet/gettransactionbyid', { value: txHash }),
+    tronPost('/wallet/gettransactioninfobyid', { value: txHash }),
     tronPost('/wallet/getnowblock', {}),
   ]);
 
   if (!tx?.txID) return { found: false };
   if (info?.receipt?.result !== 'SUCCESS') return { found: true, failed: true };
 
+  // TronGrid returns log.address WITHOUT the 0x41 network prefix — normalize.
+  const logAddr = (a) => {
+    const h = (a ?? '').toLowerCase();
+    return h.startsWith('41') ? h : '41' + h;
+  };
+
   let matched = null;
   for (const log of info.log ?? []) {
-    if ((log.address ?? '').toLowerCase() !== usdtHex) continue;
+    if (logAddr(log.address) !== usdtHex) continue;
     const [sig, fromTopic, toTopic] = log.topics ?? [];
     if (sig !== TRANSFER_TOPIC || !toTopic || !log.data) continue;
     const toHex = ('41' + toTopic.slice(-40)).toLowerCase();
@@ -108,4 +117,50 @@ export async function verifyTronUsdtTransfer(txHash, toWallets) {
   const latest = now?.block_header?.raw_data?.number ?? 0;
   const confirmations = Math.max(0, latest - (info.blockNumber ?? 0) + 1);
   return { found: true, failed: false, matched, confirmations };
+}
+
+// Verify a payout-vault claim: USDT Transfer where from = payout contract and
+// to = the user's address, covering at least minRawAmount (raw units).
+export async function verifyTronPayout(txHash, contractAddr, toAddr, minRawAmount) {
+  const usdtHex = tronToHex(config.tron.usdtContract).toLowerCase();
+  const contractHex = tronToHex(contractAddr).toLowerCase();
+  const toHex = tronToHex(toAddr).toLowerCase();
+
+  const info = await tronPost('/wallet/gettransactioninfobyid', { value: txHash });
+  if (!info?.id && !info?.blockNumber) return { found: false };
+  if (info?.receipt?.result !== 'SUCCESS') return { found: true, failed: true };
+
+  for (const log of info.log ?? []) {
+    const la = (log.address ?? '').toLowerCase();
+    if ((la.startsWith('41') ? la : '41' + la) !== usdtHex) continue;
+    const [sig, fromTopic, toTopic] = log.topics ?? [];
+    if (sig !== TRANSFER_TOPIC || !fromTopic || !toTopic || !log.data) continue;
+    const from = ('41' + fromTopic.slice(-40)).toLowerCase();
+    const to = ('41' + toTopic.slice(-40)).toLowerCase();
+    if (from === contractHex && to === toHex && BigInt('0x' + log.data) >= BigInt(minRawAmount)) {
+      return { found: true, failed: false, amountRaw: BigInt('0x' + log.data).toString() };
+    }
+  }
+  return { found: true, failed: false, notPayout: true };
+}
+
+// Read-only contract call (e.g. balanceOf). ownerAddr = any valid hex address.
+export async function tronConstantCall(contractAddr, functionSelector, paramHex = '') {
+  return tronPost('/wallet/triggerconstantcontract', {
+    owner_address: '410000000000000000000000000000000000000000',
+    contract_address: tronToHex(contractAddr),
+    function_selector: functionSelector,
+    parameter: paramHex,
+  });
+}
+
+// USDT balance (raw units) of a TRC20 payout contract.
+export async function tronUsdtBalance(ownerAddr) {
+  const res = await tronConstantCall(
+    config.tron.usdtContract,
+    'balanceOf(address)',
+    tronToHex(ownerAddr).slice(2).padStart(64, '0')
+  );
+  const hex = res?.constant_result?.[0];
+  return hex ? BigInt('0x' + hex) : 0n;
 }

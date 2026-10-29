@@ -52,6 +52,20 @@ const config = {
     requiredConfirmations: parseInt(process.env.TRON_REQUIRED_CONFIRMATIONS, 10) || 19,
     usdtDecimals: parseInt(process.env.TRON_USDT_DECIMALS, 10) || 6,
   },
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+    apiKey: process.env.CLOUDINARY_API_KEY || '',
+    apiSecret: process.env.CLOUDINARY_API_SECRET || '',
+  },
+  // Signed-claim payout vaults (smart-contract withdrawals)
+  payout: {
+    autoClaimEnabled: process.env.AUTO_CLAIM_ENABLED === 'true',
+    autoClaimMaxUsd: parseFloat(process.env.AUTO_CLAIM_MAX_USD || '500'),
+    signerPrivateKey: process.env.PAYOUT_SIGNER_PRIVATE_KEY || '',
+    voucherTtlHours: parseInt(process.env.PAYOUT_VOUCHER_TTL_HOURS, 10) || 24,
+    contractBep20: process.env.PAYOUT_CONTRACT_BEP20 || '',
+    contractTrc20: process.env.PAYOUT_CONTRACT_TRC20 || '',
+  },
 };
 
 export default config;

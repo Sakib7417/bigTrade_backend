@@ -1,8 +1,8 @@
 import express from 'express';
-import { userController } from '../modules/users/user.controller.js';
+import { userController, avatarUpload } from '../modules/users/user.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validation.middleware.js';
-import { updateProfileSchema } from '../validators/user.validator.js';
+import { updateProfileSchema, setWithdrawalPasswordSchema } from '../validators/user.validator.js';
 
 const router = express.Router();
 
@@ -43,5 +43,38 @@ router.get('/me', authenticate, userController.getProfile.bind(userController));
  *         description: Profile updated successfully
  */
 router.patch('/me', authenticate, validate(updateProfileSchema), userController.updateProfile.bind(userController));
+
+/**
+ * @swagger
+ * /api/v1/users/me/avatar:
+ *   post:
+ *     summary: Upload profile photo (multipart, field "avatar")
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post('/me/avatar', authenticate, avatarUpload, userController.uploadAvatar.bind(userController));
+
+/**
+ * @swagger
+ * /api/v1/users/me/withdrawal-password/request-otp:
+ *   post:
+ *     summary: Email OTP required to change the withdrawal password
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post('/me/withdrawal-password/request-otp', authenticate, userController.requestWithdrawalPasswordOtp.bind(userController));
+
+/**
+ * @swagger
+ * /api/v1/users/me/withdrawal-password:
+ *   post:
+ *     summary: Set or change the withdrawal password (OTP required when changing)
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.post('/me/withdrawal-password', authenticate, validate(setWithdrawalPasswordSchema), userController.setWithdrawalPassword.bind(userController));
 
 export default router;
