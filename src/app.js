@@ -11,7 +11,7 @@ import swaggerUi from 'swagger-ui-express';
 const app = express();
 
 // Behind nginx reverse proxy — trust X-Forwarded-For so rate limiting + IPs work
-app.set('trust proxy', 1);
+app.set('trust proxy', 2); // Nginx + CDN (e.g. Cloudflare) — 2 hops to real client IP
 
 // Security middleware
 app.use(helmet());

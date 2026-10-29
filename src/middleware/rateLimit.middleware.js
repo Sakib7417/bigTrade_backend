@@ -6,7 +6,7 @@ const lim = (prodMax) => (isProd ? prodMax : 1000);
 
 export const authRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: lim(5), // 5 requests per window (prod); relaxed in dev
+  max: lim(20), // 20 requests per window (prod); relaxed in dev — NAT/shared IPs need headroom
   message: {
     success: false,
     message: 'Too many authentication attempts, please try again later',
@@ -18,7 +18,7 @@ export const authRateLimit = rateLimit({
 
 export const generalRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: lim(100), // 100 requests per window (prod)
+  max: lim(600), // 600 requests per window (prod) — SPA fires many calls per page + polling
   message: {
     success: false,
     message: 'Too many requests, please try again later',
