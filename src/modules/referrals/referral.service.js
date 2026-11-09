@@ -82,42 +82,33 @@ export class ReferralService {
       }),
     ]);
 
-    // Sequential level qualification across the referral tree
+    // Level unlocks depend only on the promoter's OWN active-direct count:
+    // L1–L5 need 2/4/6/8/10, L6–L20 need 11..25 (+1 per level).
     const depths = await levelQualificationTree(userId);
     const depthMap = new Map(depths.map((d) => [d.depth, d]));
 
     const levelUnlocks = [];
-    let chainBroken = false;
-    let breakDepth = -1;
 
     for (let level = 1; level <= 20; level++) {
-      const preceding = depthMap.get(level - 1); // members that gate this level
       const own = depthMap.get(level); // members at this level
-
-      if (!chainBroken && preceding && !preceding.allQualified) {
-        chainBroken = true;
-        breakDepth = level - 1;
-      }
-
       const members = own?.members ?? 0;
-      const qualifiedMembers = own?.qualified ?? 0;
+      const required = requiredDirectsForLevel(level);
+      const enoughDirects = activeDirects >= required;
+      const unlocked = enoughDirects && members > 0;
 
       levelUnlocks.push({
         level,
         percent: DEFAULT_LEVEL_PERCENTS[level],
-        requiredDirects: requiredDirectsForLevel(level),
+        requiredDirects: required,
         members,
-        qualifiedMembers,
-        unqualifiedMembers: members - qualifiedMembers,
-        unlocked: !chainBroken && members > 0,
-        lockReason:
-          chainBroken || members === 0
-            ? breakDepth === 0
-              ? 'You need 2 active directs (members with a live investment)'
-              : breakDepth > 0
-                ? `Level ${breakDepth} is not fully qualified`
-                : 'No members at this level yet'
-            : null,
+        qualifiedMembers: members,
+        unqualifiedMembers: 0,
+        unlocked,
+        lockReason: !unlocked
+          ? !enoughDirects
+            ? `${required} active directs needed (you have ${activeDirects})`
+            : 'No members at this level yet'
+          : null,
       });
     }
 
