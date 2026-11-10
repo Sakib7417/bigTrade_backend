@@ -107,6 +107,15 @@ export class DepositService {
       parsed = await this.verifyBscTx(txHash, wallets);
     }
 
+    // Platform rule: deposits must be exact multiples of $100 — no odd sizes
+    // like $101/$150. The on-chain funds stay safe in the platform wallet.
+    if (!toDecimal(parsed.amount).mod(100).isZero()) {
+      throw new ValidationError(
+        `Deposits must be in multiples of $100 — this transaction is for $${parsed.amount}. ` +
+          'Send 100, 200, 300… USDT instead. The sent amount is safe in the platform wallet; contact support if you need help.'
+      );
+    }
+
     const requiredConfirmations =
       network === 'TRC20' ? config.tron.requiredConfirmations : config.blockchain.requiredConfirmations;
 

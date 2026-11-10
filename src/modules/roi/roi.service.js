@@ -423,7 +423,11 @@ export class RoiService {
   async getUserRoiSummary(userId) {
     const period = getCurrentPeriod();
 
-    const [earnings, totals, activeInvestments] = await Promise.all([
+    const monthStart = new Date(`${period}-01T00:00:00.000Z`);
+    const monthEnd = new Date(monthStart);
+    monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
+
+    const [earnings, totals, dailyTotals, monthPayouts, activeInvestments] = await Promise.all([
       prisma.roiEarning.findMany({
         where: { userId, period },
       }),
@@ -431,6 +435,16 @@ export class RoiService {
         where: { userId },
         _sum: { roiAmount: true },
         _count: true,
+      }),
+      // New daily-ROI engine writes to RoiPayout — include it in the totals
+      prisma.roiPayout.aggregate({
+        where: { userId, status: 'CREDITED' },
+        _sum: { creditedAmount: true },
+        _count: true,
+      }),
+      prisma.roiPayout.findMany({
+        where: { userId, status: 'CREDITED', roiDate: { gte: monthStart, lt: monthEnd } },
+        select: { creditedAmount: true, roiDate: true },
       }),
       prisma.investment.findMany({
         where: { userId, status: 'ACTIVE' },
@@ -448,9 +462,13 @@ export class RoiService {
     return {
       period,
       currentRoiPercent: currentRoi,
-      thisMonthEarnings: earnings,
-      totalRoiEarned: totals._sum.roiAmount || 0,
-      totalRoiEvents: totals._count,
+      thisMonthEarnings: [
+        ...earnings,
+        ...monthPayouts.map((p) => ({ roiAmount: p.creditedAmount, date: p.roiDate })),
+      ],
+      totalRoiEarned:
+        Number(totals._sum.roiAmount || 0) + Number(dailyTotals._sum.creditedAmount || 0),
+      totalRoiEvents: totals._count + dailyTotals._count,
       activeInvestments,
     };
   }

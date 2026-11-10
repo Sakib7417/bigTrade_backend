@@ -1,4 +1,5 @@
 import multer from 'multer';
+import { AuthorizationError } from '../../middleware/error.middleware.js';
 import { UserService } from './user.service.js';
 
 const userService = new UserService();
@@ -29,6 +30,10 @@ export class UserController {
 
   async updateProfile(req, res, next) {
     try {
+      // Name/mobile edits are admin-only — users can still change their avatar.
+      if (req.body.name !== undefined || req.body.mobile !== undefined) {
+        throw new AuthorizationError('Name and mobile can only be updated by admin');
+      }
       const user = await userService.updateProfile(req.user.id, req.body);
 
       res.status(200).json({

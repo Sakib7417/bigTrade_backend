@@ -51,8 +51,31 @@ export class AdminService {
       prisma.user.count({ where }),
     ]);
 
+    const ids = users.map((u) => u.id);
+    const invested = ids.length
+      ? await prisma.investment.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids }, status: { not: 'CANCELLED' } },
+          _sum: { amount: true },
+        })
+      : [];
+    const investedMap = new Map(invested.map((d) => [d.userId, Number(d._sum.amount ?? 0)]));
+
     return {
-      users,
+      // Members who never invested display as INACTIVE until their first deposit.
+      // Admins keep their real status — the investment rule doesn't apply to them.
+      users: users.map((u) => {
+        const amt = investedMap.get(u.id) ?? 0;
+        const status =
+          u.role !== 'USER'
+            ? u.status
+            : amt > 0
+              ? u.status
+              : u.status === 'SUSPENDED'
+                ? 'SUSPENDED'
+                : 'INACTIVE';
+        return { ...u, invested: amt, status };
+      }),
       total,
       page,
       limit,

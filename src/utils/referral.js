@@ -89,13 +89,16 @@ export const getReferralTree = async (userId, maxDepth = 20) => {
 
     const result = [];
     for (const child of children) {
+      const amt = investedMap.get(child.id) ?? 0;
       const childData = {
         ...child,
         level: depth + 1,
         directs: directMap.get(child.id) ?? 0,
         activeDirects: activeDirectMap.get(child.id) ?? 0,
-        invested: investedMap.get(child.id) ?? 0,
+        invested: amt,
         activeInvested: activeMap.get(child.id) ?? 0,
+        // Members who never invested display as INACTIVE until their first deposit
+        status: amt > 0 ? child.status : child.status === 'SUSPENDED' ? 'SUSPENDED' : 'INACTIVE',
         children: await getChildren(child.id, depth + 1),
       };
       result.push(childData);
@@ -146,8 +149,26 @@ export const getDirectReferrals = async (userId, page = 1, limit = 10) => {
     prisma.user.count({ where: { referredById: userId } }),
   ]);
 
+  const ids = referrals.map((r) => r.id);
+  const invested = ids.length
+    ? await prisma.investment.groupBy({
+        by: ['userId'],
+        where: { userId: { in: ids }, status: { not: 'CANCELLED' } },
+        _sum: { amount: true },
+      })
+    : [];
+  const investedMap = new Map(invested.map((d) => [d.userId, Number(d._sum.amount ?? 0)]));
+
   return {
-    referrals,
+    // Members who never invested display as INACTIVE until their first deposit
+    referrals: referrals.map((r) => {
+      const amt = investedMap.get(r.id) ?? 0;
+      return {
+        ...r,
+        invested: amt,
+        status: amt > 0 ? r.status : r.status === 'SUSPENDED' ? 'SUSPENDED' : 'INACTIVE',
+      };
+    }),
     total,
     page,
     limit,

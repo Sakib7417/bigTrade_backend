@@ -56,8 +56,26 @@ export class ReferralService {
 
     const paginatedUsers = users.slice(skip, skip + limit);
 
+    const ids = paginatedUsers.map((u) => u.id);
+    const invested = ids.length
+      ? await prisma.investment.groupBy({
+          by: ['userId'],
+          where: { userId: { in: ids }, status: { not: 'CANCELLED' } },
+          _sum: { amount: true },
+        })
+      : [];
+    const investedMap = new Map(invested.map((d) => [d.userId, Number(d._sum.amount ?? 0)]));
+
     return {
-      referrals: paginatedUsers,
+      // Members who never invested display as INACTIVE until their first deposit
+      referrals: paginatedUsers.map((u) => {
+        const amt = investedMap.get(u.id) ?? 0;
+        return {
+          ...u,
+          invested: amt,
+          status: amt > 0 ? u.status : u.status === 'SUSPENDED' ? 'SUSPENDED' : 'INACTIVE',
+        };
+      }),
       total,
       page,
       limit,
