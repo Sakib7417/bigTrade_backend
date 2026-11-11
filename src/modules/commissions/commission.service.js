@@ -9,9 +9,11 @@ import logger from '../../config/logger.js';
 const walletService = new WalletService();
 
 export class CommissionService {
-  // 5% direct commission on a new investment - exactly once per investment.
+  // 5% direct commission on a new investment tranche - exactly once per tranche.
+  // Tranches merge into a single Investment row, so dedup keys on the cycle
+  // (tranche) id — not the investment id, which would drop later top-ups.
   // Accepts an optional transaction client so callers can make it atomic.
-  async distributeDirectCommission(investmentId, userId, investmentAmount, existingTx = null) {
+  async distributeDirectCommission(investmentId, userId, investmentAmount, existingTx = null, cycleId = null) {
     const run = async (tx) => {
       // Get user to find referrer
       const user = await tx.user.findUnique({
@@ -32,13 +34,16 @@ export class CommissionService {
         return null;
       }
 
+      const referenceType = cycleId ? 'INVESTMENT_CYCLE' : 'INVESTMENT';
+      const referenceId = cycleId ?? investmentId;
+
       // Check if commission already exists (idempotency)
       const existingCommission = await tx.commission.findFirst({
         where: {
           userId: referrer.id,
           type: 'DIRECT',
-          referenceType: 'INVESTMENT',
-          referenceId: investmentId,
+          referenceType,
+          referenceId,
         },
       });
 
@@ -67,8 +72,8 @@ export class CommissionService {
         'COMMISSION',
         investmentId,
         `Direct commission from ${user.name}'s investment`,
-        { sourceUserId: userId, investmentId },
-        `direct-commission:${investmentId}:${referrer.id}`
+        { sourceUserId: userId, investmentId, cycleId },
+        `direct-commission:${referenceId}:${referrer.id}`
       );
 
       // Create commission record (unique constraint guards duplicates)
@@ -79,8 +84,8 @@ export class CommissionService {
           type: 'DIRECT',
           percent: directPercent,
           amount: creditable,
-          referenceType: 'INVESTMENT',
-          referenceId: investmentId,
+          referenceType,
+          referenceId,
           description: `Direct commission from ${user.name}'s investment`,
         },
       });

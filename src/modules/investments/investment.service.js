@@ -53,7 +53,7 @@ export class InvestmentService {
         },
       });
       // Audit trail: record this tranche on the cycle ledger
-      await tx.investmentCycle.create({
+      const cycle = await tx.investmentCycle.create({
         data: {
           investmentId: live.id,
           cycleNumber: (await tx.investmentCycle.count({ where: { investmentId: live.id } })) + 1,
@@ -62,7 +62,7 @@ export class InvestmentService {
           status: 'ACTIVE',
         },
       });
-      return { investment, duplicate: false, merged: true };
+      return { investment, cycle, duplicate: false, merged: true };
     }
 
     const investment = await tx.investment.create({
@@ -77,7 +77,17 @@ export class InvestmentService {
         idempotencyKey,
       },
     });
-    return { investment, duplicate: false, merged: false };
+    // First tranche is also a cycle — the commission dedup keys on cycle.id
+    const cycle = await tx.investmentCycle.create({
+      data: {
+        investmentId: investment.id,
+        cycleNumber: 1,
+        amount: value,
+        earningCap: value.mul(capMultiplier),
+        status: 'ACTIVE',
+      },
+    });
+    return { investment, cycle, duplicate: false, merged: false };
   }
 
   async createInvestment(userId, amount, idempotencyKey = null) {
@@ -100,7 +110,7 @@ export class InvestmentService {
       const capMultiplier = await this.getEarningCapMultiplier(tx);
 
       // Merge into the live investment or create one
-      const { investment, duplicate } = await this.applyTrancheTx(tx, {
+      const { investment, cycle, duplicate } = await this.applyTrancheTx(tx, {
         userId, value, capMultiplier, idempotencyKey,
       });
       if (duplicate) return { investment, duplicate: true };
@@ -118,8 +128,8 @@ export class InvestmentService {
         idempotencyKey ? `${idempotencyKey}:investment` : null
       );
 
-      // Direct referral commission (5%) - inside the same transaction
-      await commissionService.distributeDirectCommission(investment.id, userId, value, tx);
+      // Direct referral commission (5%) on this tranche - inside the same transaction
+      await commissionService.distributeDirectCommission(investment.id, userId, value, tx, cycle.id);
 
       logger.info(`Investment created: User ${userId}, Amount ${value}, ID ${investment.id}`);
 
@@ -163,7 +173,7 @@ export class InvestmentService {
       const capMultiplier = await this.getEarningCapMultiplier(tx);
 
       // Top-up merges into this investment — principal, amount and cap all grow
-      const { investment: newInvestment, duplicate } = await this.applyTrancheTx(tx, {
+      const { investment: newInvestment, cycle, duplicate } = await this.applyTrancheTx(tx, {
         userId,
         value,
         capMultiplier,
@@ -186,7 +196,7 @@ export class InvestmentService {
       );
 
       // Direct referral commission on the new tranche - inside the same transaction
-      await commissionService.distributeDirectCommission(newInvestment.id, userId, value, tx);
+      await commissionService.distributeDirectCommission(newInvestment.id, userId, value, tx, cycle.id);
 
       logger.info(`Investment top-up: User ${userId}, Amount ${value}, New ID ${newInvestment.id}`);
 

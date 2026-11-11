@@ -3,6 +3,7 @@ import { prisma } from '../../config/database.js';
 import { ConflictError, NotFoundError, ValidationError } from '../../middleware/error.middleware.js';
 import { WalletService } from '../wallet/wallet.service.js';
 import { CommissionService } from '../commissions/commission.service.js';
+import { InvestmentService } from '../investments/investment.service.js';
 import { rewardService } from '../rewards/reward.service.js';
 import { getProvider, ERC20_TRANSFER_ABI } from '../../config/blockchain.js';
 import { toDecimal } from '../../utils/money.js';
@@ -14,6 +15,7 @@ export const DEPOSIT_NETWORKS = ['BEP20', 'TRC20'];
 
 const walletService = new WalletService();
 const commissionService = new CommissionService();
+const investmentService = new InvestmentService();
 const transferIface = new ethers.Interface(ERC20_TRANSFER_ABI);
 
 export class DepositService {
@@ -293,60 +295,36 @@ export class DepositService {
       if (amount.gte(await this.getMinInvestment(tx))) {
         const idemKey = `auto-invest:deposit:${deposit.id}`;
         const capMultiplier = await this.getEarningCapMultiplier(tx);
-        const live = await tx.investment.findFirst({
-          where: { userId: deposit.userId, status: { in: ['ACTIVE', 'CAPPED', 'INACTIVE'] } },
-          orderBy: { createdAt: 'asc' },
+        const tranche = await investmentService.applyTrancheTx(tx, {
+          userId: deposit.userId,
+          value: amount,
+          capMultiplier,
+          idempotencyKey: idemKey,
         });
-        if (live) {
-          investment = await tx.investment.update({
-            where: { id: live.id },
-            data: {
-              amount: { increment: amount },
-              principal: { increment: amount },
-              earningCap: { increment: amount.mul(capMultiplier) },
-              status: 'ACTIVE',
-            },
-          });
-          await tx.investmentCycle.create({
-            data: {
-              investmentId: live.id,
-              cycleNumber: (await tx.investmentCycle.count({ where: { investmentId: live.id } })) + 1,
-              amount,
-              earningCap: amount.mul(capMultiplier),
-              status: 'ACTIVE',
-            },
-          });
-        } else {
-          investment = await tx.investment.create({
-            data: {
-              userId: deposit.userId,
-              amount,
-              principal: amount,
-              earningCap: amount.mul(capMultiplier),
-              idempotencyKey: idemKey,
-            },
-          });
+        investment = tranche.investment;
+        if (!tranche.duplicate) {
+          await walletService.debitTx(
+            tx,
+            deposit.userId,
+            amount,
+            'INVESTMENT',
+            'INVESTMENT',
+            investment.id,
+            'Auto-invested crypto deposit',
+            { depositId: deposit.id, txHash: deposit.txHash },
+            `${idemKey}:investment`
+          );
+          await commissionService.distributeDirectCommission(
+            investment.id,
+            deposit.userId,
+            amount,
+            tx,
+            tranche.cycle.id
+          );
+          logger.info(
+            `Auto-invested deposit: User ${deposit.userId}, ${amount} USDT, investment ${investment.id}`
+          );
         }
-        await walletService.debitTx(
-          tx,
-          deposit.userId,
-          amount,
-          'INVESTMENT',
-          'INVESTMENT',
-          investment.id,
-          'Auto-invested crypto deposit',
-          { depositId: deposit.id, txHash: deposit.txHash },
-          `${idemKey}:investment`
-        );
-        await commissionService.distributeDirectCommission(
-          investment.id,
-          deposit.userId,
-          amount,
-          tx
-        );
-        logger.info(
-          `Auto-invested deposit: User ${deposit.userId}, ${amount} USDT, investment ${investment.id}`
-        );
       }
 
       return { deposit: credited, duplicate: false, investment };
