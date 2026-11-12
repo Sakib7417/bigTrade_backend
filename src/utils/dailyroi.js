@@ -36,10 +36,10 @@ export function cycleFor(startedAt, roiDate) {
   return { index, cycleStart, cycleEnd, daysElapsed, remainingDays };
 }
 
-// Payouts may only be credited inside the daily window (default 6–8 PM local)
+// Payouts may only be credited inside the daily window (default 6–9 AM local)
 export function isPayoutWindowOpen(now = new Date()) {
-  const start = Number(process.env.ROI_PAYOUT_START_HOUR ?? 18);
-  const end = Number(process.env.ROI_PAYOUT_END_HOUR ?? 20);
+  const start = Number(process.env.ROI_PAYOUT_START_HOUR ?? 6);
+  const end = Number(process.env.ROI_PAYOUT_END_HOUR ?? 9);
   const h = now.getHours();
   return h >= start && h < end;
 }

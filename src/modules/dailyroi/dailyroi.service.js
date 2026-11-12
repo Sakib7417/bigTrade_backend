@@ -440,20 +440,20 @@ export class DailyRoiService {
       throw new ConflictError('Rate must be published before processing payouts');
     }
 
-    // Admin may click Process any time — outside the 6–8 PM window the request
+    // Admin may click Process any time — outside the 6–9 AM window the request
     // is queued and the cron credits wallets when the window opens
     if (!isPayoutWindowOpen()) {
       await prisma.dailyRoiRate.update({
         where: { id: rate.id },
         data: { processRequested: true },
       });
-      logger.info(`Daily ROI payout queued for ${date.toISOString().slice(0, 10)} — credits in 6–8 PM window`);
+      logger.info(`Daily ROI payout queued for ${date.toISOString().slice(0, 10)} — credits in 6–9 AM window`);
       return {
         roiDate: date,
         rate,
         queued: true,
         summary: null,
-        message: 'Queued — wallets will be credited between 6:00 PM and 8:00 PM',
+        message: 'Queued — wallets will be credited between 6:00 AM and 9:00 AM',
       };
     }
  
