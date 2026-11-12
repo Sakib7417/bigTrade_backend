@@ -6,14 +6,14 @@ import logger from '../../config/logger.js';
 const FOLDER = 'bigtrade/kyc';
 
 export class KycService {
-  // files = { idFront: [file], idBack?: [file], selfie: [file] } (multer memoryStorage)
+  // files = { idFront: [file], idBack?: [file], selfie?: [file] } (multer memoryStorage)
   async submit(userId, { documentType, documentNumber }, files) {
     const idFront = files?.idFront?.[0];
     const selfie = files?.selfie?.[0];
     const idBack = files?.idBack?.[0];
 
-    if (!idFront || !selfie) {
-      throw new ConflictError('ID front photo and a selfie are required');
+    if (!idFront) {
+      throw new ConflictError('ID front photo is required');
     }
 
     const existing = await prisma.kyc.findUnique({ where: { userId } });
@@ -26,7 +26,9 @@ export class KycService {
 
     const [idFrontUrl, selfieUrl, idBackUrl] = await Promise.all([
       uploadImage(idFront.buffer, FOLDER, `id-front-${userId}`),
-      uploadImage(selfie.buffer, FOLDER, `selfie-${userId}`),
+      selfie
+        ? uploadImage(selfie.buffer, FOLDER, `selfie-${userId}`)
+        : Promise.resolve(null),
       idBack
         ? uploadImage(idBack.buffer, FOLDER, `id-back-${userId}`)
         : Promise.resolve(null),

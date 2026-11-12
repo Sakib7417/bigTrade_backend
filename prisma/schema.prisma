@@ -525,7 +525,7 @@ model Kyc {
   documentNumber String
   idFrontUrl     String
   idBackUrl      String?
-  selfieUrl      String
+  selfieUrl      String?
   status         KycStatus @default(PENDING)
   rejectionReason String?
   submittedAt    DateTime  @default(now())
