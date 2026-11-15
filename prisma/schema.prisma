@@ -349,6 +349,7 @@ model SupportTicket {
   user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   subject    String
   message    String
+  imageUrl   String?
   status     TicketStatus @default(OPEN)
   adminReply String?
   repliedBy  String?

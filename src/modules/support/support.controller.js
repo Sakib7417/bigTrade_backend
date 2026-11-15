@@ -4,7 +4,7 @@ export class SupportController {
   async createTicket(req, res, next) {
     try {
       const { subject, message } = req.body;
-      const ticket = await supportService.createTicket(req.user.id, subject, message);
+      const ticket = await supportService.createTicket(req.user.id, subject, message, req.file);
       res.status(201).json({ success: true, message: 'Ticket submitted — admin will respond soon', data: ticket });
     } catch (error) {
       next(error);

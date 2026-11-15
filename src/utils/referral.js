@@ -159,6 +159,12 @@ export const getDirectReferrals = async (userId, page = 1, limit = 10) => {
     : [];
   const investedMap = new Map(invested.map((d) => [d.userId, Number(d._sum.amount ?? 0)]));
 
+  // Total invested by ALL direct referrals (across pages)
+  const directInvested = await prisma.investment.aggregate({
+    where: { user: { referredById: userId }, status: { not: 'CANCELLED' } },
+    _sum: { amount: true },
+  });
+
   return {
     // Members who never invested display as INACTIVE until their first deposit
     referrals: referrals.map((r) => {
@@ -172,6 +178,7 @@ export const getDirectReferrals = async (userId, page = 1, limit = 10) => {
     total,
     page,
     limit,
+    levelInvestmentTotal: Number(directInvested._sum.amount ?? 0),
     totalPages: Math.ceil(total / limit),
   };
 };

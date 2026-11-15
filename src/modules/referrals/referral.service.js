@@ -54,6 +54,15 @@ export class ReferralService {
     const users = await getLevelUsers(userId, 1, level);
     const total = users.length;
 
+    // Total invested by ALL members at this level (not just the current page)
+    const allIds = users.map((u) => u.id);
+    const levelInvested = allIds.length
+      ? await prisma.investment.aggregate({
+          where: { userId: { in: allIds }, status: { not: 'CANCELLED' } },
+          _sum: { amount: true },
+        })
+      : null;
+
     const paginatedUsers = users.slice(skip, skip + limit);
 
     const ids = paginatedUsers.map((u) => u.id);
@@ -80,6 +89,7 @@ export class ReferralService {
       page,
       limit,
       level,
+      levelInvestmentTotal: Number(levelInvested?._sum.amount ?? 0),
       totalPages: Math.ceil(total / limit),
     };
   }

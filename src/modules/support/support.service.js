@@ -1,11 +1,15 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../middleware/error.middleware.js';
+import { uploadImage } from '../../utils/cloudinary.js';
 import logger from '../../config/logger.js';
 
 export class SupportService {
-  async createTicket(userId, subject, message) {
+  async createTicket(userId, subject, message, file = null) {
+    const imageUrl = file
+      ? await uploadImage(file.buffer, 'bigtrade/support', `ticket-${userId}-${Date.now()}`)
+      : null;
     const ticket = await prisma.supportTicket.create({
-      data: { userId, subject, message },
+      data: { userId, subject, message, imageUrl },
     });
     logger.info(`Support ticket created: ${ticket.id} by user ${userId}`);
     return ticket;

@@ -68,6 +68,15 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // File upload errors
+  if (err.name === 'MulterError' || err.message === 'Only JPG, PNG or WEBP images are allowed') {
+    return res.status(400).json({
+      success: false,
+      message: err.code === 'LIMIT_FILE_SIZE' ? 'Image must be under 5MB' : err.message,
+      errorCode: 'UPLOAD_ERROR',
+    });
+  }
+
   // Default error
   const statusCode = err.statusCode || 500;
   const message = process.env.NODE_ENV === 'production' 
