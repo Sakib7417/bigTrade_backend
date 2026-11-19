@@ -931,13 +931,13 @@ export class WithdrawalService {
         throw new NotFoundError('Withdrawal not found');
       }
 
-      if (withdrawal.status !== 'APPROVED' && withdrawal.status !== 'PENDING') {
+      if (!['APPROVED', 'PENDING', 'PROCESSING'].includes(withdrawal.status)) {
         throw new ConflictError('Only pending or approved withdrawals can be completed');
       }
 
-      // Completing directly from PENDING requires a verified on-chain payout
-      if (withdrawal.status === 'PENDING' && !txHash) {
-        throw new ConflictError('A payout transaction hash is required to complete a pending withdrawal');
+      // Completing directly from PENDING/PROCESSING requires a verified on-chain payout
+      if (withdrawal.status !== 'APPROVED' && !txHash) {
+        throw new ConflictError('A payout transaction hash is required to complete this withdrawal');
       }
 
       let payout = null;
@@ -948,8 +948,9 @@ export class WithdrawalService {
         payout = await this.verifyPayoutTx(txHash, withdrawal.destinationAddress, withdrawal.netAmount, withdrawal.network);
       }
 
-      // If still pending, settle the locked funds like an approval does
-      if (withdrawal.status === 'PENDING') {
+      // If not yet settled (PENDING or old voucher-flow PROCESSING), settle the
+      // locked funds like an approval does
+      if (withdrawal.status === 'PENDING' || withdrawal.status === 'PROCESSING') {
         if (withdrawal.kind !== 'PRINCIPAL') {
           await walletService.settleLockedTx(tx, withdrawal.userId, toDecimal(withdrawal.amount));
         }
