@@ -41,6 +41,9 @@ export const rejectWithdrawalSchema = z.object({
 export const completeWithdrawalSchema = z.object({
   txHash: z
     .string()
-    .regex(/^0x[0-9a-fA-F]{64}$/, 'Invalid transaction hash')
+    .regex(
+      /^(0x[0-9a-fA-F]{64}|[0-9a-fA-F]{64})$/,
+      'Invalid transaction hash'
+    )
     .optional(),
 });

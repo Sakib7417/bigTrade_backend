@@ -9,3 +9,8 @@ export const setWithdrawalPasswordSchema = z.object({
   newPassword: z.string().min(6, 'Withdrawal password must be at least 6 characters').max(64),
   otp: z.string().min(4).max(10).optional(),
 });
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters').max(64),
+});

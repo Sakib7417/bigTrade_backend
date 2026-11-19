@@ -86,3 +86,21 @@ export async function sendOtpEmail(email, code, name = '', purpose = 'REGISTER')
     : `${code} is your verification code`;
   return sendEmail({ to: email, subject, html });
 }
+
+// Admin notification — e.g. new withdrawal request. `lines` = [label, value] pairs.
+export async function sendAdminAlertEmail(to, { title, lines }) {
+  const rows = lines
+    .map(
+      ([k, v]) =>
+        `<tr><td style="padding:5px 14px 5px 0;color:#6b7280;font-size:13px;vertical-align:top">${k}</td>` +
+        `<td style="padding:5px 0;color:#111827;font-size:14px;font-weight:600;word-break:break-all">${v}</td></tr>`
+    )
+    .join('');
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:540px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:12px">
+      <h2 style="color:#1255FF;margin:0 0 16px">${title}</h2>
+      <table style="border-collapse:collapse">${rows}</table>
+      <p style="color:#6b7280;font-size:12px;margin:20px 0 0">Open the admin panel to process this request.</p>
+    </div>`;
+  return sendEmail({ to, subject: title, html });
+}

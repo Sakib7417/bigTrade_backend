@@ -2,7 +2,7 @@ import express from 'express';
 import { userController, avatarUpload } from '../modules/users/user.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validation.middleware.js';
-import { updateProfileSchema, setWithdrawalPasswordSchema } from '../validators/user.validator.js';
+import { updateProfileSchema, setWithdrawalPasswordSchema, changePasswordSchema } from '../validators/user.validator.js';
 
 const router = express.Router();
 
@@ -76,5 +76,7 @@ router.post('/me/withdrawal-password/request-otp', authenticate, userController.
  *       - bearerAuth: []
  */
 router.post('/me/withdrawal-password', authenticate, validate(setWithdrawalPasswordSchema), userController.setWithdrawalPassword.bind(userController));
+
+router.post('/me/password', authenticate, validate(changePasswordSchema), userController.changePassword.bind(userController));
 
 export default router;

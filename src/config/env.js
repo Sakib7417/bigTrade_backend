@@ -66,6 +66,13 @@ const config = {
     contractBep20: process.env.PAYOUT_CONTRACT_BEP20 || '',
     contractTrc20: process.env.PAYOUT_CONTRACT_TRC20 || '',
   },
+  // Hot-wallet auto payouts: backend sends USDT directly when the withdrawal
+  // is below autoMaxUsd; anything larger (or underfunded) goes to the admin queue.
+  hotWallet: {
+    bep20PrivateKey: process.env.BEP20_PAYOUT_PRIVATE_KEY || '',
+    tronPrivateKey: process.env.TRON_PAYOUT_PRIVATE_KEY || '',
+    autoMaxUsd: parseFloat(process.env.AUTO_WITHDRAW_MAX_USD || '100'),
+  },
 };
 
 export default config;

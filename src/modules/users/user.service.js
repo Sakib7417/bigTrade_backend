@@ -128,6 +128,23 @@ export class UserService {
   }
 
   // Gate executed by withdrawal services before a request is created.
+  async changePassword(userId, currentPassword, newPassword) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+    if (!user || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
+      throw new ValidationError('Current password is incorrect');
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    // Revoke all sessions — other devices must log in again with the new password
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: userId }, data: { passwordHash } }),
+      prisma.refreshToken.updateMany({ where: { userId }, data: { revokedAt: new Date() } }),
+    ]);
+    logger.info(`Password changed: ${userId}`);
+  }
+
   async assertWithdrawalReady(userId, withdrawalPassword) {
     const user = await prisma.user.findUnique({
       where: { id: userId },

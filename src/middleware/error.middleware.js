@@ -72,7 +72,9 @@ export const errorHandler = (err, req, res, next) => {
   if (err.name === 'MulterError' || err.message === 'Only JPG, PNG or WEBP images are allowed') {
     return res.status(400).json({
       success: false,
-      message: err.code === 'LIMIT_FILE_SIZE' ? 'Image must be under 5MB' : err.message,
+      message: err.code === 'LIMIT_FILE_SIZE'
+        ? `Image must be under ${req.path.includes('avatar') ? '10MB' : '5MB'}`
+        : err.message,
       errorCode: 'UPLOAD_ERROR',
     });
   }

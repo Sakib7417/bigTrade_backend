@@ -8,7 +8,9 @@ import { getProvider, ERC20_TRANSFER_ABI } from '../../config/blockchain.js';
 import { autoClaimAvailable, signClaimVoucher, verifyBep20Payout } from '../../utils/payout.js';
 import { kycService } from '../kyc/kyc.service.js';
 import { userService } from '../users/user.service.js';
-import { verifyTronPayout, isTronAddress, tronUsdtBalance, tronToHex } from '../../utils/tron.js';
+import { verifyTronPayout, verifyTronUsdtTransfer, isTronAddress, tronUsdtBalance, tronToHex } from '../../utils/tron.js';
+import { hotWalletConfigured, hotWalletUsdtBalance, hotWalletHasGas, sendHotWalletPayout, hotWalletRawAmount } from '../../utils/hotwallet.js';
+import { sendAdminAlertEmail } from '../../utils/email.js';
 import config from '../../config/env.js';
 import logger from '../../config/logger.js';
 
@@ -18,8 +20,25 @@ const transferIface = new ethers.Interface(ERC20_TRANSFER_ABI);
 
 export class WithdrawalService {
   // Verify the admin's payout tx on-chain: a USDT transfer to the user's
-  // destination address covering at least the net amount.
-  async verifyPayoutTx(txHash, destinationAddress, netAmount) {
+  // destination address covering at least the net amount. `from` is NOT
+  // restricted — the admin may pay from any wallet.
+  async verifyPayoutTx(txHash, destinationAddress, netAmount, network = 'BEP20') {
+    if (network === 'TRC20') {
+      const v = await verifyTronUsdtTransfer(txHash, [destinationAddress]);
+      if (!v.found) throw new ConflictError('Payout transaction not found on-chain');
+      if (v.failed) throw new ConflictError('Payout transaction failed on-chain');
+      if (v.notPlatform || !v.matched) {
+        throw new ConflictError('Transaction is not a USDT transfer to the withdrawal address');
+      }
+      const sent = toDecimal(v.matched.amount.toString()).div(10 ** config.tron.usdtDecimals);
+      if (sent.lt(toDecimal(netAmount))) {
+        throw new ConflictError(
+          `Payout amount ${sent} USDT is less than the net withdrawal ${netAmount} USDT`
+        );
+      }
+      return { from: v.matched.fromHex, amount: sent };
+    }
+
     const provider = getProvider();
     const receipt = await provider.getTransactionReceipt(txHash).catch(() => null);
 
@@ -107,6 +126,109 @@ export class WithdrawalService {
     }
   }
 
+  // Post-commit: below the auto cap the hot wallet sends USDT directly and the
+  // withdrawal completes instantly. Any shortfall (no key, low USDT/gas, failed
+  // send) leaves it PENDING so it lands in the admin's manual queue.
+  async tryAutoPayout(withdrawalId) {
+    const w = await prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
+    if (!w || w.status !== 'PENDING' || !w.destinationAddress) return null;
+    if (!['BEP20', 'TRC20'].includes(w.network)) return null;
+    if (toDecimal(w.amount).gte(config.hotWallet.autoMaxUsd)) return null;
+    if (!hotWalletConfigured(w.network)) return null;
+
+    try {
+      const raw = BigInt(hotWalletRawAmount(w.network, w.netAmount));
+      const [usdt, gasOk] = await Promise.all([
+        hotWalletUsdtBalance(w.network),
+        hotWalletHasGas(w.network),
+      ]);
+      if (usdt < raw) {
+        logger.warn(`Auto payout skipped for ${withdrawalId}: hot wallet USDT ${usdt} < ${raw} — manual queue`);
+        return null;
+      }
+      if (!gasOk) {
+        logger.warn(`Auto payout skipped for ${withdrawalId}: hot wallet low on gas — manual queue`);
+        return null;
+      }
+
+      const txHash = await sendHotWalletPayout(w.network, w.destinationAddress, w.netAmount);
+
+      // Persist the hash immediately — if finalization dies, admin can complete
+      // manually with the same tx instead of risking a double-send.
+      await prisma.withdrawal.update({ where: { id: withdrawalId }, data: { payoutTxHash: txHash } });
+
+      const updated = await this.finalizePaid(withdrawalId, txHash);
+      logger.info(`Auto payout sent: withdrawal ${withdrawalId} on ${w.network}, tx ${txHash}`);
+      return { txHash, withdrawal: updated };
+    } catch (error) {
+      logger.warn(`Auto payout failed for ${withdrawalId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  // PENDING → COMPLETED after an on-chain payout is confirmed: settles the
+  // locked balance, closes the ledger entries, consumes principal when needed.
+  async finalizePaid(withdrawalId, txHash) {
+    return prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw`SELECT * FROM "Withdrawal" WHERE id = ${withdrawalId} FOR UPDATE`;
+      const w = rows[0];
+      if (!w || w.status !== 'PENDING') {
+        throw new ConflictError('Withdrawal status changed — cannot finalize');
+      }
+
+      if (w.kind !== 'PRINCIPAL') {
+        await walletService.settleLockedTx(tx, w.userId, toDecimal(w.amount));
+      }
+      await tx.walletTransaction.updateMany({
+        where: { referenceType: 'WITHDRAWAL', referenceId: withdrawalId },
+        data: { status: 'COMPLETED', description: 'Paid via auto hot-wallet payout' },
+      });
+      const updated = await tx.withdrawal.update({
+        where: { id: withdrawalId },
+        data: {
+          status: 'COMPLETED',
+          payoutTxHash: txHash,
+          processedAt: new Date(),
+          completedAt: new Date(),
+        },
+      });
+      await this.consumePrincipalTx(tx, w);
+      return updated;
+    });
+  }
+
+  // Email the admin about every new withdrawal request. Address comes from the
+  // ADMIN_NOTIFY_EMAIL system setting (admin panel → withdrawals page).
+  async notifyAdminWithdrawal(withdrawal, userId) {
+    try {
+      const setting = await prisma.systemSetting.findUnique({
+        where: { key: 'ADMIN_NOTIFY_EMAIL' },
+      });
+      const to = setting?.value?.trim();
+      if (!to) return;
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true, email: true, referralCode: true },
+      });
+
+      const autoPaid = withdrawal.status === 'COMPLETED';
+      await sendAdminAlertEmail(to, {
+        title: `New withdrawal request — $${withdrawal.amount} ${withdrawal.network ?? ''}`,
+        lines: [
+          ['User', `${user?.name ?? '—'} (${user?.email ?? userId})${user?.referralCode ? ` · ${user.referralCode}` : ''}`],
+          ['Amount', `$${withdrawal.amount} → net $${withdrawal.netAmount} USDT`],
+          ['Network', withdrawal.network ?? '—'],
+          ['Address', withdrawal.destinationAddress ?? '—'],
+          ['Type', withdrawal.kind ?? 'BALANCE'],
+          ['Status', autoPaid ? 'COMPLETED — auto-paid from hot wallet' : 'PENDING — manual payout required (2–4h SLA)'],
+        ],
+      });
+    } catch (error) {
+      logger.warn(`Admin withdrawal alert failed: ${error.message}`);
+    }
+  }
+
   async createWithdrawal(userId, amount, destinationAddress, bankDetails, idempotencyKey = null, withdrawalPassword = null) {
     const value = toDecimal(amount);
     const network = this.detectNetwork(destinationAddress);
@@ -191,11 +313,9 @@ export class WithdrawalService {
     });
 
     if (!result.duplicate) {
-      const issued = await this.tryIssueVoucher(result.withdrawal.id);
-      if (issued) {
-        result.withdrawal = issued.withdrawal;
-        result.claim = issued.claim;
-      }
+      const paid = await this.tryAutoPayout(result.withdrawal.id);
+      if (paid) result.withdrawal = paid.withdrawal;
+      this.notifyAdminWithdrawal(result.withdrawal, userId).catch(() => {});
     }
     return result;
   }
@@ -343,11 +463,9 @@ export class WithdrawalService {
     });
 
     if (!result.duplicate) {
-      const issued = await this.tryIssueVoucher(result.withdrawal.id);
-      if (issued) {
-        result.withdrawal = issued.withdrawal;
-        result.claim = issued.claim;
-      }
+      const paid = await this.tryAutoPayout(result.withdrawal.id);
+      if (paid) result.withdrawal = paid.withdrawal;
+      this.notifyAdminWithdrawal(result.withdrawal, userId).catch(() => {});
     }
     return result;
   }
@@ -800,7 +918,7 @@ export class WithdrawalService {
     // Same tx hash cannot be used to complete two withdrawals
     if (txHash) {
       const used = await prisma.withdrawal.findUnique({ where: { payoutTxHash: txHash } });
-      if (used) {
+      if (used && used.id !== withdrawalId) {
         throw new ConflictError('This transaction hash was already used for another withdrawal');
       }
     }
@@ -827,7 +945,7 @@ export class WithdrawalService {
         if (!withdrawal.destinationAddress) {
           throw new ConflictError('Withdrawal has no destination address to verify against');
         }
-        payout = await this.verifyPayoutTx(txHash, withdrawal.destinationAddress, withdrawal.netAmount);
+        payout = await this.verifyPayoutTx(txHash, withdrawal.destinationAddress, withdrawal.netAmount, withdrawal.network);
       }
 
       // If still pending, settle the locked funds like an approval does

@@ -4,10 +4,10 @@ import { UserService } from './user.service.js';
 
 const userService = new UserService();
 
-// Avatar upload — 2MB max, images only, streamed to Cloudinary
+// Avatar upload — 10MB max, images only, streamed to Cloudinary
 export const avatarUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, cb) => {
     if (/^image\/(jpe?g|png|webp)$/.test(file.mimetype)) return cb(null, true);
     cb(new Error('Only JPG, PNG or WEBP images are allowed'));
@@ -73,6 +73,15 @@ export class UserController {
     try {
       await userService.setWithdrawalPassword(req.user.id, req.body.newPassword, req.body.otp);
       res.status(200).json({ success: true, message: 'Withdrawal password saved' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async changePassword(req, res, next) {
+    try {
+      await userService.changePassword(req.user.id, req.body.currentPassword, req.body.newPassword);
+      res.status(200).json({ success: true, message: 'Password changed — please log in again' });
     } catch (error) {
       next(error);
     }
