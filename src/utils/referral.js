@@ -1,5 +1,25 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database.js';
 import { LIVE_INVESTMENT_STATUSES } from './commission.js';
+
+// For each member id, total business under them — their OWN investment plus
+// every descendant's investment across the whole downline.
+export const teamInvestmentTotals = async (ids) => {
+  if (!ids.length) return new Map();
+  const rows = await prisma.$queryRaw`
+    WITH RECURSIVE downline AS (
+      SELECT id AS root, id AS node FROM "User" WHERE id IN (${Prisma.join(ids)})
+      UNION ALL
+      SELECT d.root, u.id FROM "User" u JOIN downline d ON u."referredById" = d.node
+    )
+    SELECT d.root, COALESCE(SUM(i.amount), 0) AS total
+    FROM downline d
+    LEFT JOIN "Investment" i
+      ON i."userId" = d.node AND i.status <> 'CANCELLED'
+    GROUP BY d.root
+  `;
+  return new Map(rows.map((r) => [r.root, Number(r.total ?? 0)]));
+};
 
 export const generateReferralCode = (prefix = '') => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -159,6 +179,9 @@ export const getDirectReferrals = async (userId, page = 1, limit = 10) => {
     : [];
   const investedMap = new Map(invested.map((d) => [d.userId, Number(d._sum.amount ?? 0)]));
 
+  // Each direct's whole-team investment (all their descendants)
+  const teamMap = await teamInvestmentTotals(ids);
+
   // Total invested by ALL direct referrals (across pages)
   const directInvested = await prisma.investment.aggregate({
     where: { user: { referredById: userId }, status: { not: 'CANCELLED' } },
@@ -172,6 +195,7 @@ export const getDirectReferrals = async (userId, page = 1, limit = 10) => {
       return {
         ...r,
         invested: amt,
+        teamInvested: teamMap.get(r.id) ?? 0,
         status: amt > 0 ? r.status : r.status === 'SUSPENDED' ? 'SUSPENDED' : 'INACTIVE',
       };
     }),

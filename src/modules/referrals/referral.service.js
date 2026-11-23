@@ -1,6 +1,6 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError } from '../../middleware/error.middleware.js';
-import { getReferralTree, getDirectReferrals } from '../../utils/referral.js';
+import { getReferralTree, getDirectReferrals, teamInvestmentTotals } from '../../utils/referral.js';
 import { levelQualificationTree, requiredDirectsForLevel, DEFAULT_LEVEL_PERCENTS, countActiveDirects } from '../../utils/commission.js';
 import logger from '../../config/logger.js';
 
@@ -75,6 +75,9 @@ export class ReferralService {
       : [];
     const investedMap = new Map(invested.map((d) => [d.userId, Number(d._sum.amount ?? 0)]));
 
+    // Each member's TEAM total — their own investment plus their entire downline
+    const teamMap = await teamInvestmentTotals(ids);
+
     return {
       // Members who never invested display as INACTIVE until their first deposit
       referrals: paginatedUsers.map((u) => {
@@ -82,6 +85,7 @@ export class ReferralService {
         return {
           ...u,
           invested: amt,
+          teamInvested: teamMap.get(u.id) ?? 0,
           status: amt > 0 ? u.status : u.status === 'SUSPENDED' ? 'SUSPENDED' : 'INACTIVE',
         };
       }),
@@ -140,12 +144,16 @@ export class ReferralService {
       });
     }
 
+    // Logged-in user's own total team business — own investment + whole downline
+    const teamBusiness = (await teamInvestmentTotals([userId])).get(userId) ?? 0;
+
     return {
       directReferrals: directCount,
       activeDirects,
       totalTeamSize: totalTeamCount,
       totalTeamInvestments: totalInvestments._count,
       totalTeamInvestmentAmount: totalInvestments._sum.amount || 0,
+      teamBusiness,
       levelUnlocks,
       unlockedLevels: levelUnlocks.filter((l) => l.unlocked).length,
     };
