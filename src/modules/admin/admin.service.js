@@ -137,19 +137,7 @@ export class AdminService {
       }
     }
 
-    // Check if mobile is being changed and if it's already taken
-    if (mobile) {
-      const existingMobile = await prisma.user.findFirst({
-        where: {
-          mobile,
-          NOT: { id: userId },
-        },
-      });
-
-      if (existingMobile) {
-        throw new ConflictError('Mobile number already in use');
-      }
-    }
+    // Mobile is not unique — no "already in use" check needed
 
     const user = await prisma.user.update({
       where: { id: userId },
@@ -448,11 +436,11 @@ export class AdminService {
     const bcrypt = (await import('bcrypt')).default;
     const { name, email, mobile, password, role = 'USER', referralCode } = data;
 
-    const existing = await prisma.user.findFirst({
-      where: { OR: [{ email }, { mobile }] },
+    const existing = await prisma.user.findUnique({
+      where: { email },
     });
     if (existing) {
-      throw new ConflictError('Email or mobile already registered');
+      throw new ConflictError('Email already registered');
     }
 
     let referredById = null;

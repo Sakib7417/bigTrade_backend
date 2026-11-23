@@ -107,11 +107,8 @@ export class AuthService {
       throw new ConflictError('Email already registered');
     }
 
-    // Check if mobile exists
-    const existingMobile = await prisma.user.findUnique({ where: { mobile } });
-    if (existingMobile && existingMobile.id !== existingEmail?.id) {
-      throw new ConflictError('Mobile number already registered');
-    }
+    // Mobile numbers are intentionally NOT unique — the same number can be
+    // used on multiple accounts. Email remains the unique login identity.
 
     // Validate referral code if provided
     let referredBy = null;
@@ -124,7 +121,7 @@ export class AuthService {
         throw new NotFoundError('Invalid referral code');
       }
 
-      if (referrer.email === email || referrer.mobile === mobile) {
+      if (referrer.email === email) {
         throw new ConflictError('Cannot refer yourself');
       }
 
@@ -249,11 +246,9 @@ export class AuthService {
   }
 
   async login(identifier, password) {
-    // Find user by email or mobile
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [{ email: identifier }, { mobile: identifier }],
-      },
+    // Login is email-only — mobile numbers are not unique across accounts
+    const user = await prisma.user.findUnique({
+      where: { email: identifier },
     });
 
     if (!user) {

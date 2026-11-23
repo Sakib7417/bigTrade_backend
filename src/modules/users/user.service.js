@@ -52,14 +52,7 @@ export class UserService {
   async updateProfile(userId, data) {
     const { name, mobile } = data;
 
-    if (mobile) {
-      const existing = await prisma.user.findFirst({
-        where: { mobile, NOT: { id: userId } },
-      });
-      if (existing) {
-        throw new ConflictError('Mobile number already in use');
-      }
-    }
+    // Mobile is not unique — same number may exist on multiple accounts
 
     // Role, status, wallet, ROI etc. are intentionally not updatable here
     const user = await prisma.user.update({

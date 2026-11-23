@@ -71,7 +71,7 @@ model User {
   id              String      @id @default(cuid())
   name            String
   email           String      @unique
-  mobile          String      @unique
+  mobile          String
   passwordHash    String
   withdrawalPasswordHash  String?
   withdrawalPasswordSetAt DateTime?

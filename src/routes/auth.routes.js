@@ -46,7 +46,7 @@ const router = express.Router();
  *       201:
  *         description: User registered successfully
  *       409:
- *         description: Email or mobile already registered
+ *         description: Email already registered
  */
 router.post('/register', authRateLimit, validate(registerSchema), authController.register.bind(authController));
 router.post('/verify-email', authRateLimit, validate(verifyEmailSchema), authController.verifyEmail.bind(authController));
@@ -72,7 +72,7 @@ router.post('/reset-password', authRateLimit, validate(resetPasswordSchema), aut
  *             properties:
  *               identifier:
  *                 type: string
- *                 description: Email or mobile number
+ *                 description: Email address
  *                 example: john@example.com
  *               password:
  *                 type: string
